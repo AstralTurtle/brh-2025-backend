@@ -1,7 +1,7 @@
 import uuid
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse
-from cryptography.hazmat.primitives import rsa
+from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives import serialization as crypto_serialization
 
 from apkit.server import ActivityPubServer, SubRouter
@@ -11,7 +11,7 @@ from apkit.models import (
     Person, CryptographicKey, Follow, Actor as APKitActor,
     Nodeinfo, NodeinfoSoftware, NodeinfoProtocol, NodeinfoServices, NodeinfoUsage, NodeinfoUsageUsers
 )
-from apkit.client.models import Resource, WebfingerResult, WebfingerLink
+from apkit.client.models import Resource, WebfingerResult, Link
 from apkit.client.asyncio.client import ActivityPubClient
 
 # --- Configuration ---
@@ -63,7 +63,7 @@ async def get_actor_endpoint(identifier: str):
 @app.webfinger()
 async def webfinger_endpoint(request: Request, acct: Resource) -> Response:
     if acct.username == "demo" and acct.host == HOST:
-        link = WebfingerLink(
+        link = Link(
             rel="self",
             type="application/activity+json",
             href=f"https://{HOST}/users/{USER_ID}"
