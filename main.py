@@ -15,7 +15,7 @@ from apkit.client.models import Resource, WebfingerResult, Link
 from apkit.client.asyncio.client import ActivityPubClient
 
 # --- Configuration ---
-HOST = "example.com"
+HOST = "4de70cf88f75.ngrok-free.app"
 USER_ID = str(uuid.uuid4())
 
 # --- Key Generation (for demonstration) ---
