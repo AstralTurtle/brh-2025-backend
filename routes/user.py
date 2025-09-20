@@ -4,14 +4,16 @@ from apkit.models import CryptographicKey
 from apkit.server import SubRouter
 from apkit.server.responses import ActivityResponse
 from cryptography.hazmat.primitives import serialization as crypto_serialization
+from fastapi import Depends
 from fastapi.responses import JSONResponse
 from pydantic_sqlite import DataBase
 
 from models import CreateUser, User
+from routes.auth import get_current_user, hash_password
 from settings import get_settings
 
 db: DataBase = DataBase("users.db")
-
+auth_db: DataBase = DataBase("auth.db")
 router = SubRouter(prefix="/users")
 
 settings = get_settings()
@@ -20,6 +22,8 @@ settings = get_settings()
 @router.post("/create")
 def create_user(user: CreateUser):
     user_id = str(uuid.uuid4())
+
+    password_hash, salt = hash_password(user.password)
 
     private_key_str = settings.private_key
 
@@ -54,6 +58,14 @@ def create_user(user: CreateUser):
 
     db.save(actor)
 
+    auth_data = {
+        "user_id": actor.id,
+        "password_hash": password_hash,
+        "salt": salt,
+        "created_at": str(uuid.uuid4()),
+    }
+    auth_db.save("auth_data", auth_data)
+
     return actor
 
 
@@ -79,5 +91,18 @@ async def get_actor_named(name: str):
             return ActivityResponse(actors[0])
     except Exception as e:
         print(f"Error querying database: {e}")
+
+    return JSONResponse({"error": "User not found"}, status_code=404)
+
+
+@router.get("/me")
+async def get_current_user_profile(current_user: str = Depends(get_current_user)):
+    """Get the authenticated user's profile"""
+    try:
+        actors = db.select(User, where={"id": current_user})
+        if actors:
+            return ActivityResponse(actors[0])
+    except Exception as e:
+        print(f"Error getting current user: {e}")
 
     return JSONResponse({"error": "User not found"}, status_code=404)
