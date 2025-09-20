@@ -1,13 +1,14 @@
 import uuid
-from apkit.server import SubRouter
+
 from apkit.models import CryptographicKey
+from apkit.server import SubRouter
+from apkit.server.responses import ActivityResponse
+from cryptography.hazmat.primitives import serialization as crypto_serialization
+from fastapi.responses import JSONResponse
+from pydantic_sqlite import DataBase
+
 from models import CreateUser, User
 from settings import get_settings
-from cryptography.hazmat.primitives import serialization as crypto_serialization
-from pydantic_sqlite import DataBase
-from apkit.server.responses import ActivityResponse
-from fastapi.responses import JSONResponse
-
 
 db: DataBase = DataBase("users.db")
 
@@ -68,3 +69,15 @@ async def get_actor_endpoint(identifier: str):
         print(f"Error querying database: {e}")
 
     return JSONResponse({"error": "Not Found"}, status_code=404)
+
+
+@router.get("/named/{name}")
+async def get_actor_named(name: str):
+    try:
+        actors = db.select(User, where={"preferredUsername": name})
+        if actors:
+            return ActivityResponse(actors[0])
+    except Exception as e:
+        print(f"Error querying database: {e}")
+
+    return JSONResponse({"error": "User not found"}, status_code=404)

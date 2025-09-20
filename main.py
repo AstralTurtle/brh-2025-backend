@@ -1,27 +1,29 @@
 import uuid
-from fastapi import Request, Response
-from fastapi.responses import JSONResponse
-from cryptography.hazmat.primitives.asymmetric import rsa
-from cryptography.hazmat.primitives import serialization as crypto_serialization
 
-from apkit.server import ActivityPubServer
-from apkit.server.types import Context, ActorKey
-from apkit.server.responses import ActivityResponse
+import uvicorn
+from apkit.client.asyncio.client import ActivityPubClient
+from apkit.client.models import Link, Resource, WebfingerResult
 from apkit.models import (
-    Person,
+    Actor as APKitActor,
+)
+from apkit.models import (
     CryptographicKey,
     Follow,
-    Actor as APKitActor,
     Nodeinfo,
-    NodeinfoSoftware,
     NodeinfoProtocol,
     NodeinfoServices,
+    NodeinfoSoftware,
     NodeinfoUsage,
     NodeinfoUsageUsers,
+    Person,
 )
-from apkit.client.models import Resource, WebfingerResult, Link
-from apkit.client.asyncio.client import ActivityPubClient
-import uvicorn
+from apkit.server import ActivityPubServer
+from apkit.server.responses import ActivityResponse
+from apkit.server.types import ActorKey, Context
+from cryptography.hazmat.primitives import serialization as crypto_serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from fastapi import Request, Response
+from fastapi.responses import JSONResponse
 
 import routes
 import routes.user
