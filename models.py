@@ -8,6 +8,7 @@ class CreateUser(BaseModel):
     display_name: str
     summary: Optional[str] = ""
     password: str
+    icon: str
 
 
 class LoginRequest(BaseModel):

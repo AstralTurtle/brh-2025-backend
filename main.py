@@ -28,6 +28,7 @@ from apkit.server.types import Context
 from cryptography.hazmat.primitives import serialization as crypto_serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import Request, Response
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 import routes
@@ -90,6 +91,14 @@ app.setup()
 app.include_router(router=routes.user.router)
 app.include_router(router=routes.posts.router)
 
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,  # Allow cookies and authorization headers
+    allow_methods=["*"],  # Allow all HTTP methods (GET, POST, PUT, DELETE, etc.)
+    allow_headers=["*"],  # Allow all headers in cross-origin requests
+)
 
 # --- Endpoints ---
 app.inbox("/users/{identifier}/inbox")
@@ -264,6 +273,14 @@ async def on_like_activity(ctx: Context):
 
         traceback.print_exc()
         return JSONResponse({"error": "Internal server error"}, status_code=500)
+
+
+# @asynccontextmanager
+# async def lifespan(app: FastAPI):
+#     scheduler = BackgroundScheduler()
+#     scheduler.add_job(printit, "interval", minutes=1)
+#     scheduler.start()
+#     yield
 
 
 if __name__ == "__main__":
