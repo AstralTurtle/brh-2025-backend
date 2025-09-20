@@ -1,0 +1,33 @@
+{
+    "_default": {
+        "1": {
+            "id": "0.0.0.0/users/techno",
+            "type": "Person",
+            "name": "techno",
+            "summary": "",
+            "tag": [],
+            "attachment": [],
+            "inbox": "0.0.0.0/users/techno/inbox",
+            "outbox": "0.0.0.0/users/techno/outbox",
+            "followers": "0.0.0.0/users/techno/followers",
+            "following": "0.0.0.0/users/techno/following",
+            "preferredUsername": "techno",
+            "publicKey": {
+                "type": "CryptographicKey",
+                "id": "0.0.0.0/users/techno#main-key",
+                "owner": "0.0.0.0/users/techno",
+                "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAt/L/Aem5A1ZLA12DmDTS\nPw/w+f8poOoF00Ol03P9gonlFIYqu0reEWtrngo7/t9a/nbIQRx9Dlw/xXy3a/O+\ncEPspMyCIi1xqYhAUo+cUYjfpQw/D9JZLfqj4Vv+AcfhHYyHcqSmLXmxp1zuapiT\n4JOY+QMnF5mOMwJa5Jo0R6apGgIugixF7iK4zGuJpyRpD5L1qe7a2ZyTf3e5g4Jb\nALLQZ85oDKj29wV4It2rb9QGoEbI3A38DHhEEr8avR7y/ElSi5A+KsL6Lfail08+\nnxPkGY6FyymSM9xIdpf5NPpeFRjJGmxrVGPVXWNIo4A+kWDOPxM7pUCmtn23VALI\n7QIDAQAB\n-----END PUBLIC KEY-----\n"
+            },
+            "assertionMethod": [],
+            "@context": [
+                "https://www.w3.org/ns/activitystreams",
+                "https://w3id.org/security/v1"
+            ],
+            "_auth": {
+                "password_hash": "179e18366d12fca04b4ece66195962f31d79c8f6164dbf8fcfb9ac673f0b37ba",
+                "salt": "140ef2536775faa891cce132b2ec6295",
+                "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC38v8B6bkDVksD\nXYOYNNI/D/D5/ymg6gXTQ6XTc/2CieUUhiq7St4Ra2ueCjv+31r+dshBHH0OXD/F\nfLdr875wQ+ykzIIiLXGpiEBSj5xRiN+lDD8P0lkt+qPhW/4Bx+EdjIdypKYtebGn\nXO5qmJPgk5j5AycXmY4zAlrkmjRHpqkaAi6CLEXuIrjMa4mnJGkPkvWp7trZnJN/\nd7mDglsAstBnzmgMqPb3BXgi3atv1AagRsjcDfwMeEQSvxq9HvL8SVKLkD4qwvot\n9qKXTz6fE+QZjoXLKZIz3Eh2l/k0+l4VGMkabGtUY9VdY0ijgD6RYM4/EzulQKa2\nfbdUAsjtAgMBAAECggEACHb/rM8HFbQPtqNug1S8RMJPNLSSbgERlzkP3/erTP8F\n0i3MY0WyNhCrPqC6Rbkcia+Io+po3NN6QcnCnQ6gjwT+gPpCQMq2O3bK0vcghTtX\nDf7OxhkdbnllYjZRWDP3qYbxKAw9824cB+zFsepnNQNFxlZn+Eo3hM8RGgpN6UAa\nGKxjL42YTombWOIRQwvsakCz3uxPxTfqEq6j6nksLcl/mTryI2zyCZAk6G/RcY72\novTO8KcmS2u98VUHj0GdJhiMI5OcTAJ28op2zPQB7biOQ/Us5xv6rhZkhzopQcM1\nTIDPdgEIXamgx1Ihpq+CSom04R25F9ENaBc9+7YPFwKBgQD6vAlKxgpAfc8SMHDr\nL5m34NR3XyeNuR2VMWWxNxxdV/sq5H2aU10HzX8rG51qI/96F+U3jGRCxPlcpgiS\nKBB0IuiZ80sSrLh3JUTOQ0v/qafD8ED+GnQrzo4VNy+1O0+5L+7/+KLgPPIxVTgh\nNS9Yzbs1O1eepeL+GLD0d5dc+wKBgQC7z+sCNrnWHjxfrJ+uLNrwt+xHSjYWqAOS\n3DiavoiKWIOUP2dS0h5TXl1NwdLrNGVKSVvDA8vS5P9RnCNSwT0l5lk+0Pdwl8uz\nSnIi7MQWTrkah4tzmtizrZuBumd5gH7oqH0+waB76KiRCTy959uzfncsJmn6cFJd\nNkFjKCI9NwKBgDIrF4zfjUOUKK+SA7X7Iz24faqY3ngr9vBYHunThhhjNz1A1KTh\nUzbxdiVw9BE9vKt4RoPT0mfNs7tG+WYNICWsqm/LT1UgPBSS326J5pX0Iz5APzDY\nqC/vt1wlW6VehbgfEColXKmTaD5Yt89lLeEN4QxooEJ9HKsM07NGjoGrAoGAJZWP\nJwtClznHxTGrZtStH7z+uKl+N3x58prFbRoyAtWBx1oE2EsaLH7W1yexiMYcewhB\nJ76LvHF9Mpy3aOkoznvRYkO5MLv/1KpSOvD8sKYiXs+/NWxIb3SPiR9/c44mV3LY\nVYW0EvfVO+kIUcyjZ8EoIhqx3J87rFGeNjSi3XMCgYEAn1SYKssbff4U240emiy1\n7wGh+791wJZYyP8g7f8iG+/d06/RSQBQfJj7MGDMr0l4qvuiiAXWLDlNpts1SvTY\nG1kRjAn8qVYc+hGxzgkSEhUZBsZUQEn9X+xJLdqz62qhsHGim17G3JlLlZZqEAYy\n3q/vYJiABSnPkZIr/9fyQOU=\n-----END PRIVATE KEY-----\n"
+            }
+        }
+    }
+}

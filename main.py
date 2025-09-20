@@ -7,6 +7,7 @@ from apkit.models import (
     Actor as APKitActor,
 )
 from apkit.models import (
+    Create,
     CryptographicKey,
     Follow,
     Nodeinfo,
@@ -15,25 +16,32 @@ from apkit.models import (
     NodeinfoSoftware,
     NodeinfoUsage,
     NodeinfoUsageUsers,
+    Note,
     Person,
 )
 from apkit.server import ActivityPubServer
 from apkit.server.responses import ActivityResponse
-from apkit.server.types import ActorKey, Context
+from apkit.server.types import Context
 from cryptography.hazmat.primitives import serialization as crypto_serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse
 
 import routes
+import routes.posts
 import routes.user
+from database import Database
 from settings import get_settings
+from utils import get_keys_for_actor
 
 # --- Configuration ---
-HOST = "4de70cf88f75.ngrok-free.app"
+HOST = get_settings().host
 USER_ID = str(uuid.uuid4())
 
 settings = get_settings()
+
+posts_db = Database("posts.json")
+users_db = Database("users.json")
 
 # --- Key Generation (for demonstration) ---
 # In a real application, you would load a persistent key from a secure storage.
@@ -67,15 +75,11 @@ app = ActivityPubServer()
 
 
 # --- Key Retrieval Function ---
-# This function provides the private key for signing outgoing activities.
-async def get_keys_for_actor(identifier: str) -> list[ActorKey]:
-    if identifier == USER_ID:
-        return [ActorKey(key_id=actor.publicKey.id, private_key=private_key)]
-    return []
 
 
 # -- Routers ---
 app.include_router(router=routes.user.router)
+app.include_router(router=routes.posts.router)
 
 
 # --- Endpoints ---
@@ -83,15 +87,11 @@ app.inbox("/users/{identifier}/inbox")
 app.outbox("/users/{identifier}/outbox")
 
 
-# @app.get("/users/{identifier}")
-# async def get_actor_endpoint(identifier: str):
-#     if identifier == USER_ID:
-#         return ActivityResponse(actor)
-#     return JSONResponse({"error": "Not Found"}, status_code=404)
-
-
 @app.webfinger()
 async def webfinger_endpoint(request: Request, acct: Resource) -> Response:
+    print(f"[DEBUG] Webfinger request for: {acct.username}@{acct.host}")
+
+    # Handle demo user
     if acct.username == "demo" and acct.host == HOST:
         link = Link(
             rel="self",
@@ -100,6 +100,19 @@ async def webfinger_endpoint(request: Request, acct: Resource) -> Response:
         )
         wf_result = WebfingerResult(subject=acct, links=[link])
         return JSONResponse(wf_result.to_json(), media_type="application/jrd+json")
+
+    # Handle your database users - THIS IS THE KEY FIX
+    if acct.host == HOST or acct.host == settings.host:
+        user_doc = users_db.find_one_raw({"preferredUsername": acct.username})
+        if user_doc:
+            link = Link(
+                rel="self",
+                type="application/activity+json",
+                href=user_doc["id"],  # This points to the actor endpoint
+            )
+            wf_result = WebfingerResult(subject=acct, links=[link])
+            return JSONResponse(wf_result.to_json(), media_type="application/jrd+json")
+
     return JSONResponse({"message": "Not Found"}, status_code=404)
 
 
@@ -144,6 +157,48 @@ async def on_follow_activity(ctx: Context):
     # Send the signed Accept activity back to the follower's inbox
     await ctx.send(get_keys_for_actor, follower_actor, accept_activity)
     return Response(status_code=202)
+
+
+@app.on(Create)
+async def create_post(ctx: Context):
+    try:
+        print("[DEBUG] Create activity received")
+        print(f"[DEBUG] Activity: {ctx.activity}")
+        print(f"[DEBUG] Actor: {ctx.activity.actor}")
+        print(f"[DEBUG] Actor type: {type(ctx.activity.actor)}")
+
+        # Fix: Handle actor as string (which is the normal case)
+        actor_id = str(ctx.activity.actor)  # Convert to string if it's not already
+
+        print(f"[DEBUG] Looking for user with id: {actor_id}")
+
+        # Find user by actor ID
+        user_doc = users_db.find_one_raw({"id": actor_id})
+        if user_doc:
+            print(f"[DEBUG] Found user: {user_doc.get('preferredUsername')}")
+
+            if isinstance(ctx.activity.object, Note):
+                new_post = ctx.activity.object
+                print(f"[DEBUG] Post content: {new_post.content}")
+
+                # Use the built-in to_json() method to serialize the ActivityPub Note
+                post_data = new_post.to_json()
+
+                # Store the ActivityPub JSON-LD format directly in TinyDB
+                posts_db.insert_raw(post_data)
+                print("[DEBUG] Post stored successfully!")
+
+                return Response(status_code=202)
+        else:
+            print(f"[DEBUG] User not found with id: {actor_id}")
+
+    except Exception as e:
+        print(f"[DEBUG] Error in create_post: {e}")
+        import traceback
+
+        traceback.print_exc()
+
+    return JSONResponse({"error": "User not found"}, status_code=404)
 
 
 if __name__ == "__main__":
