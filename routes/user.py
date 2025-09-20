@@ -1,10 +1,13 @@
 import uuid
 from apkit.server import SubRouter
-from apmodel import Person
-from models import CreateUser
+from apkit.models import CryptographicKey
+from models import CreateUser, User
 from settings import get_settings
 from cryptography.hazmat.primitives import serialization as crypto_serialization
 from pydantic_sqlite import DataBase
+from apkit.server.responses import ActivityResponse
+from fastapi.responses import JSONResponse
+
 
 db: DataBase = DataBase("users.db")
 
@@ -12,22 +15,30 @@ router = SubRouter(prefix="/users")
 
 settings = get_settings()
 
-router.post("/create")
+
+@router.post("/create")
 def create_user(user: CreateUser):
     user_id = str(uuid.uuid4())
-    
-    
-    private_key = settings.private_key
-    
-    public_key_pem = private_key.public_key().public_bytes(
-        encoding=crypto_serialization.Encoding.PEM,
-        format=crypto_serialization.PublicFormat.SubjectPublicKeyInfo
-    ).decode('utf-8')
-    
+
+    private_key_str = settings.private_key
+
+    private_key = crypto_serialization.load_pem_private_key(
+        private_key_str.encode("utf-8"), password=None
+    )
+
+    public_key_pem = (
+        private_key.public_key()
+        .public_bytes(
+            encoding=crypto_serialization.Encoding.PEM,
+            format=crypto_serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        .decode("utf-8")
+    )
+
     host = settings.host
-    
-    actor = Person(
-        id=f"https://{settings}/users/{user_id}",
+
+    actor = User(
+        id=f"https://{host}/users/{user_id}",
         name=user.display_name,
         preferredUsername=user.username,
         summary=user.summary,
@@ -36,12 +47,24 @@ def create_user(user: CreateUser):
         publicKey=CryptographicKey(
             id=f"https://{host}/users/{user_id}#main-key",
             owner=f"https://{host}/users/{user_id}",
-            publicKeyPem=public_key_pem
-        )
+            publicKeyPem=public_key_pem,
+        ),
     )
-    
+
     db.save(actor)
-    
-    
-    
+
     return actor
+
+
+@router.get("/{identifier}")
+async def get_actor_endpoint(identifier: str):
+    host = settings.host
+    actor_id = f"https://{host}/users/{identifier}"
+    try:
+        actor = db.select(User, where={"id": actor_id})
+        if actor:
+            return ActivityResponse(actor[0])
+    except Exception as e:
+        print(f"Error querying database: {e}")
+
+    return JSONResponse({"error": "Not Found"}, status_code=404)
