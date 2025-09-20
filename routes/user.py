@@ -201,6 +201,33 @@ async def get_user(username: str):
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
+@router.get("/{id}")
+async def get_user_by_id(id: str):
+    try:
+        user_doc = users_db.find_one_raw({"id": id})
+        if not user_doc:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        clean_doc = user_doc.copy()
+        if "_auth" in clean_doc:
+            del clean_doc["_auth"]
+
+        # Ensure proper ActivityPub context
+        if "@context" not in clean_doc:
+            clean_doc["@context"] = ACTIVITYPUB_CONTEXT["@context"]
+
+        # Return raw JSON-LD with proper headers
+        return JSONResponse(
+            content=clean_doc, headers={"Content-Type": "application/activity+json"}
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error fetching user: {e}")
+        raise HTTPException(status_code=500, detail="Internal Server Error")
+
+
 @router.get("/me")
 async def get_current_user_profile(current_user: str = Depends(get_current_user)):
     """Get the authenticated user's profile"""
