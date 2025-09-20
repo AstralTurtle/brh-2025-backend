@@ -105,6 +105,7 @@ def make_signed_request():
     # Prepare headers
     headers = {
         "Content-Type": "application/activity+json",
+        "Host": host,  # Add this line
         "Date": date,
         "Digest": digest,
         "Signature": signature_header,

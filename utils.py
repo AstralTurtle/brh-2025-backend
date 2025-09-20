@@ -1,58 +1,61 @@
+import logging
+from typing import List
+
 from apkit.server.types import ActorKey
-from cryptography.hazmat.primitives import serialization
 
 from database import Database
 from settings import get_settings
 
+# Add logging
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.DEBUG)
+
 settings = get_settings()
 users_db = Database("users.json")
 
-# Load the server's private key from settings
-server_private_key = serialization.load_pem_private_key(
-    settings.private_key.encode("utf-8"),
-    password=None,
-)
 
+async def get_keys_for_actor(actor_id: str) -> List[ActorKey]:
+    """Get cryptographic keys for an actor - required by APKit"""
+    try:
+        logger.debug(f"[DEBUG] get_keys_for_actor called with: {actor_id}")
 
-async def get_keys_for_actor(identifier: str) -> list[ActorKey]:
-    print(f"[DEBUG] Getting keys for actor: {identifier}")
+        # Find the user in your database
+        user_doc = users_db.find_one_raw({"id": actor_id})
+        logger.debug(f"[DEBUG] Found user_doc: {bool(user_doc)}")
 
-    # Try to find user by ID first
-    user_doc = users_db.find_one_raw({"id": identifier})
-    print(f"[DEBUG] Found user by ID: {user_doc is not None}")
-
-    # If not found by ID, try by preferredUsername
-    if not user_doc:
-        # Extract username from identifier if it's a URL
-        if "/" in identifier:
-            username = identifier.split("/")[-1]
-            user_doc = users_db.find_one_raw({"preferredUsername": username})
-            print(
-                f"[DEBUG] Found user by username '{username}': {user_doc is not None}"
+        if not user_doc or "_auth" not in user_doc:
+            logger.debug(f"[DEBUG] No user or auth data found for {actor_id}")
+            # Let's also try searching by different formats
+            logger.debug(
+                "[DEBUG] Trying to find user with different actor_id formats..."
             )
 
-    if user_doc:
-        print(f"[DEBUG] User found: {user_doc.get('preferredUsername')}")
-        if user_doc.get("_auth") and user_doc["_auth"].get("private_key"):
-            try:
-                # Use the user's private key for signing
-                user_private_key = serialization.load_pem_private_key(
-                    user_doc["_auth"]["private_key"].encode("utf-8"),
-                    password=None,
-                )
+            # Try without protocol
+            if actor_id.startswith("http://") or actor_id.startswith("https://"):
+                alt_id = actor_id.replace("http://", "").replace("https://", "")
+                user_doc = users_db.find_one_raw({"id": alt_id})
+                logger.debug(f"[DEBUG] Trying alt_id {alt_id}: found={bool(user_doc)}")
 
-                public_key_id = user_doc["publicKey"]["id"]
-                print(
-                    f"[DEBUG] Successfully loaded keys for {identifier}, public key ID: {public_key_id}"
-                )
+            if not user_doc:
+                return []
 
-                return [ActorKey(key_id=public_key_id, private_key=user_private_key)]
-            except Exception as e:
-                print(f"[DEBUG] Error loading private key: {e}")
-        else:
-            print("[DEBUG] No _auth or private_key found in user doc")
-    else:
-        print(f"[DEBUG] No user found for identifier: {identifier}")
+        # Extract the private key from auth data
+        private_key_pem = user_doc["_auth"]["private_key"]
+        key_id = user_doc["publicKey"]["id"]
 
-    print(f"[DEBUG] No keys found for actor: {identifier}")
-    return []
+        logger.debug(f"[DEBUG] Returning key with id: {key_id}")
+
+        # Return as ActorKey format expected by APKit
+        return [
+            ActorKey(
+                id=key_id,  # The key ID
+                private_key_pem=private_key_pem,
+            )
+        ]
+
+    except Exception as e:
+        logger.error(f"[DEBUG] Error getting keys for actor {actor_id}: {e}")
+        import traceback
+
+        traceback.print_exc()
+        return []

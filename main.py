@@ -3,6 +3,7 @@ import uuid
 import uvicorn
 from apkit.client.asyncio.client import ActivityPubClient
 from apkit.client.models import Link, Resource, WebfingerResult
+from apkit.config import AppConfig
 from apkit.models import (
     Actor as APKitActor,
 )
@@ -10,6 +11,7 @@ from apkit.models import (
     Create,
     CryptographicKey,
     Follow,
+    Like,
     Nodeinfo,
     NodeinfoProtocol,
     NodeinfoServices,
@@ -70,8 +72,14 @@ actor = Person(
     ),
 )
 
+config = AppConfig(
+    actor_keys=get_keys_for_actor,  # This is where you pass the key loader
+)
+
 # --- Server Initialization ---
-app = ActivityPubServer()
+app = ActivityPubServer(apkit_config=config)
+
+app.setup()
 
 
 # --- Key Retrieval Function ---
@@ -199,6 +207,62 @@ async def create_post(ctx: Context):
         traceback.print_exc()
 
     return JSONResponse({"error": "User not found"}, status_code=404)
+
+
+@app.on(Like)
+async def on_like_activity(ctx: Context):
+    try:
+        activity = ctx.activity
+        if not isinstance(activity, Like):
+            return JSONResponse({"error": "Invalid activity type"}, status_code=400)
+
+        print("[DEBUG] Like activity received")
+        print(f"[DEBUG] Actor: {activity.actor}")
+        print(f"[DEBUG] Object: {activity.object}")
+
+        # Get the actor who liked the post
+        actor_id = str(activity.actor)
+        liker_user = users_db.find_one_raw({"id": actor_id})
+
+        if not liker_user:
+            print(f"[DEBUG] Liker not found: {actor_id}")
+            return JSONResponse({"error": "Actor not found"}, status_code=404)
+
+        # Get the object being liked (could be a post ID or full object)
+        liked_object_id = str(activity.object)
+
+        # Find the post being liked
+        liked_post = posts_db.find_one_raw({"id": liked_object_id})
+
+        if not liked_post:
+            print(f"[DEBUG] Post not found: {liked_object_id}")
+            return JSONResponse({"error": "Post not found"}, status_code=404)
+
+        # Store the like activity
+        like_data = {
+            "id": activity.id,
+            "type": "Like",
+            "actor": actor_id,
+            "object": liked_object_id,
+            "published": activity.published or datetime.utcnow().isoformat() + "Z",
+        }
+
+        # Create a likes database if you don't have one
+        likes_db = Database("likes.json")
+        likes_db.insert_raw(like_data)
+
+        print(
+            f"[DEBUG] Like stored: {liker_user['preferredUsername']} liked post {liked_object_id}"
+        )
+
+        return Response(status_code=202)
+
+    except Exception as e:
+        print(f"[DEBUG] Error in on_like_activity: {e}")
+        import traceback
+
+        traceback.print_exc()
+        return JSONResponse({"error": "Internal server error"}, status_code=500)
 
 
 if __name__ == "__main__":

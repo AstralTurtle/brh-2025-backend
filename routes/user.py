@@ -1,5 +1,3 @@
-import hashlib
-
 from apkit.models import CryptographicKey, Person
 from apkit.server import SubRouter
 from apkit.server.responses import ActivityResponse
@@ -7,6 +5,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import Depends, HTTPException
 from fastapi.responses import JSONResponse
+from pyld import jsonld
 
 from database import Database
 from models import CreateUser, LoginRequest
@@ -16,6 +15,55 @@ from settings import get_settings
 router = SubRouter(prefix="/users")
 settings = get_settings()
 users_db = Database("users.json")
+
+# ActivityPub JSON-LD context
+ACTIVITYPUB_CONTEXT = {
+    "@context": [
+        "https://www.w3.org/ns/activitystreams",
+        "https://w3id.org/security/v1",
+    ]
+}
+
+
+def json_to_person(user_doc: dict) -> Person:
+    """Convert JSON-LD document to Person object using pyld"""
+    # Remove auth data if present
+    clean_doc = user_doc.copy()
+    if "_auth" in clean_doc:
+        del clean_doc["_auth"]
+
+    # Expand JSON-LD to handle compact forms
+    try:
+        expanded = jsonld.expand(clean_doc)
+        if expanded:
+            expanded_doc = expanded[0]
+        else:
+            expanded_doc = clean_doc
+    except:  # noqa: E722
+        expanded_doc = clean_doc
+
+    # Handle publicKey reconstruction
+    public_key = None
+    if "publicKey" in clean_doc:
+        pk_data = clean_doc["publicKey"]
+        public_key = CryptographicKey(
+            id=pk_data["id"],
+            owner=pk_data["owner"],
+            publicKeyPem=pk_data["publicKeyPem"],
+        )
+
+    return Person(
+        id=clean_doc["id"],
+        type=clean_doc.get("type", "Person"),
+        preferredUsername=clean_doc["preferredUsername"],
+        name=clean_doc.get("name", ""),
+        summary=clean_doc.get("summary", ""),
+        inbox=clean_doc["inbox"],
+        outbox=clean_doc["outbox"],
+        followers=clean_doc.get("followers"),
+        following=clean_doc.get("following"),
+        publicKey=public_key,
+    )
 
 
 @router.post("/create")
@@ -42,42 +90,42 @@ async def create_user(user_data: CreateUser):
         )
 
         # Create user ID and public key
-        user_id = f"{settings.host}/users/{user_data.username}"
+        user_id = f"https://{settings.host}/users/{user_data.username}"
         public_key_id = f"{user_id}#main-key"
 
-        public_key_obj = CryptographicKey(
-            id=public_key_id,
-            owner=user_id,
-            publicKeyPem=public_pem.decode("utf-8"),
-        )
-
-        # Hash password with salt using the improved function
+        # Hash password with salt
         password_hash, salt = hash_password(user_data.password)
 
-        # Create ActivityPub User object
-        actor = Person(
-            id=user_id,
-            type="Person",
-            preferredUsername=user_data.username,
-            name=user_data.display_name,
-            summary=user_data.summary,
-            inbox=f"{user_id}/inbox",
-            outbox=f"{user_id}/outbox",
-            followers=f"{user_id}/followers",
-            following=f"{user_id}/following",
-            publicKey=public_key_obj,
-        )
-
-        # Use to_json() to get proper ActivityPub JSON-LD format
-        user_doc = actor.to_json()
-        # Add authentication fields to the document
-        user_doc["_auth"] = {
-            "password_hash": password_hash,
-            "salt": salt,
-            "private_key": private_pem.decode("utf-8"),
+        # Create proper ActivityPub JSON-LD document
+        user_doc = {
+            "@context": ACTIVITYPUB_CONTEXT["@context"],
+            "id": user_id,
+            "type": "Person",
+            "preferredUsername": user_data.username,
+            "name": user_data.display_name,
+            "summary": user_data.summary,
+            "inbox": f"{user_id}/inbox",
+            "outbox": f"{user_id}/outbox",
+            "followers": f"{user_id}/followers",
+            "following": f"{user_id}/following",
+            "publicKey": {
+                "id": public_key_id,
+                "owner": user_id,
+                "publicKeyPem": public_pem.decode("utf-8"),
+            },
+            "_auth": {
+                "password_hash": password_hash,
+                "salt": salt,
+                "private_key": private_pem.decode("utf-8"),
+            },
         }
 
-        users_db.insert_raw(user_doc)
+        # Compact the JSON-LD for storage (optional)
+        try:
+            compacted = jsonld.compact(user_doc, ACTIVITYPUB_CONTEXT)
+            users_db.insert_raw(compacted)
+        except:
+            users_db.insert_raw(user_doc)
 
         return JSONResponse(
             {"message": "User created successfully", "user_id": user_id},
@@ -100,12 +148,23 @@ async def login_user(login_data: LoginRequest):
         if not user_doc or "_auth" not in user_doc:
             raise HTTPException(status_code=401, detail="Invalid credentials")
 
-        password_hash = hashlib.sha256(login_data.password.encode()).hexdigest()
+        # Use the proper hash_password function with salt
+        auth_data = user_doc["_auth"]
+        from routes.auth import verify_password
 
-        if user_doc["_auth"]["password_hash"] != password_hash:
+        if not verify_password(
+            login_data.password, auth_data["password_hash"], auth_data["salt"]
+        ):
             raise HTTPException(status_code=401, detail="Invalid credentials")
 
-        return JSONResponse({"message": "Login successful", "user_id": user_doc["id"]})
+        # Create JWT token
+        from routes.auth import create_jwt_token
+
+        token = create_jwt_token(user_doc["id"])
+
+        return JSONResponse(
+            {"access_token": token, "token_type": "bearer", "user_id": user_doc["id"]}
+        )
 
     except HTTPException:
         raise
@@ -121,14 +180,19 @@ async def get_user(username: str):
         if not user_doc:
             raise HTTPException(status_code=404, detail="User not found")
 
-        # Remove auth data before returning ActivityPub object
-        if "_auth" in user_doc:
-            user_doc = user_doc.copy()  # Don't modify the original
-            del user_doc["_auth"]
+        # Remove auth data and ensure proper JSON-LD context
+        clean_doc = user_doc.copy()
+        if "_auth" in clean_doc:
+            del clean_doc["_auth"]
 
-        # Return as ActivityResponse for proper headers
-        actor = Person(**user_doc)
-        return ActivityResponse(actor)
+        # Ensure proper ActivityPub context
+        if "@context" not in clean_doc:
+            clean_doc["@context"] = ACTIVITYPUB_CONTEXT["@context"]
+
+        # Return raw JSON-LD with proper headers
+        return JSONResponse(
+            content=clean_doc, headers={"Content-Type": "application/activity+json"}
+        )
 
     except HTTPException:
         raise
@@ -145,12 +209,9 @@ async def get_current_user_profile(current_user: str = Depends(get_current_user)
         if not user_doc:
             raise HTTPException(status_code=404, detail="User not found")
 
-        # Remove auth data before returning ActivityPub object
-        if "_auth" in user_doc:
-            user_doc = user_doc.copy()  # Don't modify the original
-            del user_doc["_auth"]
-
-        return user_doc
+        # Convert to Person object and return as ActivityResponse
+        actor = json_to_person(user_doc)
+        return ActivityResponse(actor)
 
     except HTTPException:
         raise

@@ -183,6 +183,7 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "pydantic-sqlite" },
     { name = "pyjwt" },
+    { name = "pyld" },
     { name = "tinydb" },
     { name = "uvicorn" },
 ]
@@ -200,6 +201,7 @@ requires-dist = [
     { name = "pydantic-settings", specifier = ">=2.10.1" },
     { name = "pydantic-sqlite", specifier = ">=0.4.0" },
     { name = "pyjwt", specifier = ">=2.10.1" },
+    { name = "pyld", specifier = ">=2.0.4" },
     { name = "tinydb", specifier = ">=4.8.2" },
     { name = "uvicorn", specifier = ">=0.36.0" },
 ]
