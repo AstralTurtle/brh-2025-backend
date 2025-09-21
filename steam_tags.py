@@ -138,10 +138,13 @@ async def update_info():
     data_request["tag"] = current_tag
     update_tags.insert(0, current_tag)
     data = steamspypi.download(data_request)
-    array_data = [data[k] for k in data.keys()][:10]
+
+    # Use the formatted text function instead of raw array data
+    formatted_content = parse_steam_data_to_text(data, current_tag)
+
     await create_post(
         CreatePost(
-            content=f"Top 10 trending games for {current_tag} on steam: {array_data}",
+            content=formatted_content,
             to=["https://www.w3.org/ns/activitystreams#Public"],
             cc=[
                 f"https://{settings.host}/users/{current_tag.replace(' ', '').lower()}tracker/followers"

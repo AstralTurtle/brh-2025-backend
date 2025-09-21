@@ -124,17 +124,26 @@ async def like_post(post_id: str, current_user: str = Depends(get_current_user))
 
         decoded_post_id = urllib.parse.unquote(post_id)
 
-        # Check if post exists - try both versions
+        # Check if post exists - try multiple formats
         post = posts_db.find_one_raw({"id": decoded_post_id})
         if not post:
             post = posts_db.find_one_raw({"id": post_id})
+        # Try to find by UUID if it's just a UUID
+        if not post and not post_id.startswith("http"):
+            full_url = f"https://{settings.host}/posts/{post_id}"
+            post = posts_db.find_one_raw({"id": full_url})
+            # Also try with 0.0.0.0 (from your existing posts)
+            if not post:
+                full_url_alt = f"https://0.0.0.0/posts/{post_id}"
+                post = posts_db.find_one_raw({"id": full_url_alt})
+
         if not post:
             raise HTTPException(status_code=404, detail="Post not found")
 
         # Use the actual post ID from the found post
         actual_post_id = post["id"]
 
-        # Check if user already liked this post
+        # Check if user already liked this post BEFORE doing anything else
         existing_like = likes_db.find_one_raw(
             {"actor": current_user, "object": actual_post_id}
         )
@@ -167,24 +176,29 @@ async def like_post(post_id: str, current_user: str = Depends(get_current_user))
             }
         )
 
-        # Send to user's outbox for federation
-        username = user_doc["preferredUsername"]
-        outbox_url = f"http://localhost:8000/users/{username}/outbox"
+        # Try to send to user's outbox for federation (but don't fail if this doesn't work)
+        try:
+            username = user_doc["preferredUsername"]
+            outbox_url = f"http://localhost:8000/users/{username}/outbox"
 
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                outbox_url,
-                json=like_activity,
-                headers={
-                    "Content-Type": "application/activity+json",
-                    "Accept": "application/activity+json",
-                    "User-Agent": "brh-2025-backend/0.1.0",
-                },
-            )
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.post(
+                    outbox_url,
+                    json=like_activity,
+                    headers={
+                        "Content-Type": "application/activity+json",
+                        "Accept": "application/activity+json",
+                        "User-Agent": "brh-2025-backend/0.1.0",
+                    },
+                )
 
-            if response.status_code not in [200, 201, 202]:
-                print(f"Outbox error: {response.status_code} - {response.text}")
-                raise HTTPException(status_code=500, detail="Failed to send to outbox")
+                if response.status_code not in [200, 201, 202]:
+                    print(f"Outbox warning: {response.status_code} - {response.text}")
+                    # Don't raise error here - the like is already stored locally
+
+        except Exception as outbox_error:
+            print(f"Outbox federation failed (non-critical): {outbox_error}")
+            # Continue anyway - local like storage succeeded
 
         return JSONResponse(
             {"message": "Post liked successfully", "like_id": like_activity["id"]},
@@ -207,10 +221,19 @@ async def get_post_likes(post_id: str):
 
         decoded_post_id = urllib.parse.unquote(post_id)
 
-        # Check if post exists - try both versions
+        # Check if post exists - try multiple formats
         post = posts_db.find_one_raw({"id": decoded_post_id})
         if not post:
             post = posts_db.find_one_raw({"id": post_id})
+        # Try to find by UUID if it's just a UUID
+        if not post and not post_id.startswith("http"):
+            full_url = f"https://{settings.host}/posts/{post_id}"
+            post = posts_db.find_one_raw({"id": full_url})
+            # Also try with 0.0.0.0 (from your existing posts)
+            if not post:
+                full_url_alt = f"https://0.0.0.0/posts/{post_id}"
+                post = posts_db.find_one_raw({"id": full_url_alt})
+
         if not post:
             raise HTTPException(status_code=404, detail="Post not found")
 

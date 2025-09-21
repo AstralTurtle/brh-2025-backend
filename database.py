@@ -111,3 +111,16 @@ class Database:
     def all_raw(self) -> List[Dict]:
         """Get all documents as raw dictionaries"""
         return self.db.all()
+
+    def find_raw(self, where: Dict[str, Any]) -> List[Dict]:
+        """Find multiple documents matching criteria and return as raw dictionaries"""
+        query = Query()
+        conditions = []
+        for key, value in where.items():
+            conditions.append(getattr(query, key) == value)
+
+        final_query = conditions[0]
+        for condition in conditions[1:]:
+            final_query &= condition
+
+        return self.db.search(final_query)

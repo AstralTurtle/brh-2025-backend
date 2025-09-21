@@ -34,6 +34,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 import routes
+import routes.auth
 import routes.posts
 import routes.user
 import steam_tags
@@ -102,6 +103,7 @@ app.setup()
 # -- Routers ---
 app.include_router(router=routes.user.router)
 app.include_router(router=routes.posts.router)
+app.include_router(router=routes.auth.router)
 
 
 app.add_middleware(
