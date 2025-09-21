@@ -72,23 +72,23 @@ async def create_post(
         posts_db.insert_raw(note)
 
         # Send to user's outbox with proper ActivityPub headers
-        username = user_doc["preferredUsername"]
-        outbox_url = f"http://localhost:8000/users/{username}/outbox"
+        # username = user_doc["preferredUsername"]
+        # outbox_url = f"http://localhost:8000/users/{username}/outbox"
 
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                outbox_url,
-                json=create_activity,
-                headers={
-                    "Content-Type": "application/activity+json",  # ActivityPub content type
-                    "Accept": "application/activity+json",  # Accept ActivityPub responses
-                    "User-Agent": "brh-2025-backend/0.1.0",  # Identify your server
-                },
-            )
+        # async with httpx.AsyncClient() as client:
+        #     response = await client.post(
+        #         outbox_url,
+        #         json=create_activity,
+        #         headers={
+        #             "Content-Type": "application/activity+json",  # ActivityPub content type
+        #             "Accept": "application/activity+json",  # Accept ActivityPub responses
+        #             "User-Agent": "brh-2025-backend/0.1.0",  # Identify your server
+        #         },
+        #     )
 
-            if response.status_code not in [200, 201, 202]:
-                print(f"Outbox error: {response.status_code} - {response.text}")
-                raise HTTPException(status_code=500, detail="Failed to send to outbox")
+        #     if response.status_code not in [200, 201, 202]:
+        #         print(f"Outbox error: {response.status_code} - {response.text}")
+        #         raise HTTPException(status_code=500, detail="Failed to send to outbox")
 
         return JSONResponse(
             {

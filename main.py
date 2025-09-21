@@ -25,7 +25,7 @@ from apkit.models import (
 from apkit.server import ActivityPubServer
 from apkit.server.responses import ActivityResponse
 from apkit.server.types import Context
-from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from cryptography.hazmat.primitives import serialization as crypto_serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import FastAPI, Request, Response
@@ -80,8 +80,8 @@ actor = Person(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    scheduler = BackgroundScheduler()
-    scheduler.add_job(steam_tags.update_info, "interval", minute=5)
+    scheduler = AsyncIOScheduler()
+    scheduler.add_job(steam_tags.update_info, "interval", seconds=15)
     scheduler.start()
     yield
 
