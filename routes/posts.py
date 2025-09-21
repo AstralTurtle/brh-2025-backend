@@ -85,6 +85,10 @@ async def create_post(
             "cc": post_data.cc or [f"{current_user}/followers"],
         }
 
+        # Add inReplyTo field if this is a reply
+        if post_data.in_reply_to:
+            note["inReplyTo"] = post_data.in_reply_to
+
         # Create the Create activity
         create_activity = {
             "@context": "https://www.w3.org/ns/activitystreams",
