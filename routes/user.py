@@ -131,9 +131,18 @@ async def create_user(user_data: CreateUser):
         except:
             users_db.insert_raw(user_doc)
 
+        # return JSONResponse(
+        #     {"message": "User created successfully", "user_id": user_id},
+        #     status_code=201,
+        # )
+
+        # Create JWT token
+        from routes.auth import create_jwt_token
+
+        token = create_jwt_token(user_id)
+
         return JSONResponse(
-            {"message": "User created successfully", "user_id": user_id},
-            status_code=201,
+            {"access_token": token, "token_type": "bearer", "user_id": user_id}
         )
 
     except HTTPException:

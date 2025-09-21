@@ -25,15 +25,18 @@ from apkit.models import (
 from apkit.server import ActivityPubServer
 from apkit.server.responses import ActivityResponse
 from apkit.server.types import Context
+from apscheduler.schedulers.background import BackgroundScheduler
 from cryptography.hazmat.primitives import serialization as crypto_serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
-from fastapi import Request, Response
+from fastapi import FastAPI, Request, Response
+from fastapi.concurrency import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 import routes
 import routes.posts
 import routes.user
+import steam_tags
 from database import Database
 from settings import get_settings
 from utils import get_keys_for_actor
@@ -74,12 +77,21 @@ actor = Person(
     ),
 )
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    scheduler = BackgroundScheduler()
+    scheduler.add_job(steam_tags.update_info, "interval", minute=5)
+    scheduler.start()
+    yield
+
+
 config = AppConfig(
     actor_keys=get_keys_for_actor,  # This is where you pass the key loader
 )
 
 # --- Server Initialization ---
-app = ActivityPubServer(apkit_config=config)
+app = ActivityPubServer(apkit_config=config, lifespan=lifespan)
 
 app.setup()
 
@@ -108,16 +120,6 @@ app.outbox("/users/{identifier}/outbox")
 @app.webfinger()
 async def webfinger_endpoint(request: Request, acct: Resource) -> Response:
     print(f"[DEBUG] Webfinger request for: {acct.username}@{acct.host}")
-
-    # Handle demo user
-    if acct.username == "demo" and acct.host == HOST:
-        link = Link(
-            rel="self",
-            type="application/activity+json",
-            href=f"https://{HOST}/users/{USER_ID}",
-        )
-        wf_result = WebfingerResult(subject=acct, links=[link])
-        return JSONResponse(wf_result.to_json(), media_type="application/jrd+json")
 
     # Handle your database users - THIS IS THE KEY FIX
     if acct.host == HOST or acct.host == settings.host:
@@ -273,14 +275,6 @@ async def on_like_activity(ctx: Context):
 
         traceback.print_exc()
         return JSONResponse({"error": "Internal server error"}, status_code=500)
-
-
-# @asynccontextmanager
-# async def lifespan(app: FastAPI):
-#     scheduler = BackgroundScheduler()
-#     scheduler.add_job(printit, "interval", minutes=1)
-#     scheduler.start()
-#     yield
 
 
 if __name__ == "__main__":
