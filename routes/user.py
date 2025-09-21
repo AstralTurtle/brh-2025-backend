@@ -190,6 +190,202 @@ async def login_user(login_data: LoginRequest):
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
+@router.get("/search")
+async def search_users(q: str, limit: int = 20):
+    """
+    Search for users by name.
+    - If query contains '@', performs webfinger lookup for external users
+    - Otherwise searches local users by preferredUsername or name
+    - limit: Maximum number of results to return (default: 20)
+    """
+    try:
+        results = []
+        logger.info(f"Starting search for query: {q}, limit: {limit}")
+
+        # If query contains '@', treat as webfinger lookup
+        if "@" in q:
+            logger.info(f"Performing webfinger lookup for: {q}")
+            try:
+                import requests
+
+                # Parse the webfinger address (user@domain)
+                username, domain = q.split("@", 1)
+                webfinger_url = (
+                    f"https://{domain}/.well-known/webfinger?resource=acct:{q}"
+                )
+
+                logger.info(f"Webfinger URL: {webfinger_url}")
+
+                # Perform webfinger lookup using requests
+                response = requests.get(
+                    webfinger_url,
+                    headers={"Accept": "application/jrd+json"},
+                    timeout=10,
+                )
+
+                if response.status_code == 200:
+                    webfinger_data = response.json()
+                    logger.info("Webfinger response received")
+
+                    # Find the ActivityPub actor link
+                    actor_url = None
+                    if "links" in webfinger_data:
+                        for link in webfinger_data["links"]:
+                            if (
+                                link.get("rel") == "self"
+                                and link.get("type") == "application/activity+json"
+                            ):
+                                actor_url = link.get("href")
+                                logger.info(f"Found actor URL: {actor_url}")
+                                break
+
+                    if actor_url:
+                        # Fetch the actor profile using manual HTTP request
+                        actor_response = requests.get(
+                            actor_url,
+                            headers={
+                                "Accept": "application/activity+json",
+                                "User-Agent": "ActivityPub-Client/1.0",
+                            },
+                            timeout=10,
+                        )
+
+                        if actor_response.status_code == 200:
+                            actor_data = actor_response.json()
+                            logger.info(
+                                f"Actor data received for: {actor_data.get('preferredUsername')}"
+                            )
+
+                            # Extract icon/avatar information
+                            icon = None
+                            if "icon" in actor_data:
+                                icon_data = actor_data["icon"]
+                                # Handle both single icon and array of icons
+                                if isinstance(icon_data, list) and len(icon_data) > 0:
+                                    icon = icon_data[0].get("url")
+                                elif isinstance(icon_data, dict):
+                                    icon = icon_data.get("url")
+
+                            # Clean up the response to match our format
+                            user_result = {
+                                "id": actor_data.get("id"),
+                                "type": actor_data.get("type", "Person"),
+                                "preferredUsername": actor_data.get("preferredUsername"),
+                                "name": actor_data.get("name", ""),
+                                "summary": actor_data.get("summary", ""),
+                                "inbox": actor_data.get("inbox"),
+                                "outbox": actor_data.get("outbox"),
+                                "followers": actor_data.get("followers"),
+                                "following": actor_data.get("following"),
+                                "is_local": False,
+                            }
+                            
+                            # Add icon if it exists
+                            if icon:
+                                user_result["icon"] = icon
+                                logger.info(f"Added icon for user: {icon}")
+
+                            results.append(user_result)
+                            logger.info(
+                                f"Added webfinger user to results: {user_result.get('preferredUsername')}"
+                            )
+                        else:
+                            logger.warning(
+                                f"Failed to fetch actor profile, status: {actor_response.status_code}"
+                            )
+                    else:
+                        logger.warning(
+                            "No ActivityPub actor URL found in webfinger links"
+                        )
+                else:
+                    logger.warning(
+                        f"Webfinger lookup failed with status: {response.status_code}"
+                    )
+
+            except Exception as webfinger_error:
+                logger.warning(f"Webfinger lookup failed for {q}: {webfinger_error}")
+                # Continue to search local users if webfinger fails
+
+        # Search local users (always search local, even if webfinger was attempted)
+        logger.info("Starting local user search")
+        local_query = q.lower()
+
+        try:
+            all_users = users_db.find_raw({})
+            logger.info("Retrieved users from database")
+
+            for i, user_doc in enumerate(all_users):
+                # Skip if we've reached the limit
+                if len(results) >= limit:
+                    logger.info(f"Reached limit of {limit} results, breaking")
+                    break
+
+                # Skip if no preferredUsername (invalid user)
+                if "preferredUsername" not in user_doc:
+                    continue
+
+                username = user_doc.get("preferredUsername", "").lower()
+                display_name = user_doc.get("name", "").lower()
+
+                # Match by preferredUsername or display name
+                if local_query in username or local_query in display_name:
+                    # Clean the user data (remove auth info)
+                    clean_doc = user_doc.copy()
+                    if "_auth" in clean_doc:
+                        del clean_doc["_auth"]
+
+                    # Add is_local flag
+                    clean_doc["is_local"] = True
+
+                    # Ensure proper context
+                    if "@context" not in clean_doc:
+                        clean_doc["@context"] = ACTIVITYPUB_CONTEXT["@context"]
+
+                    results.append(clean_doc)
+
+        except Exception as local_search_error:
+            logger.error(f"Error in local search: {local_search_error}")
+            raise
+
+        # Trim results to limit if necessary
+        results = results[:limit]
+        logger.info(f"Returning {len(results)} results")
+
+        return JSONResponse(
+            {
+                "query": q,
+                "limit": limit,
+                "results_count": len(results),
+                "results": results,
+            },
+            headers={"Content-Type": "application/json"},
+        )
+
+    except Exception as e:
+        logger.error(f"Error searching users: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.get("/me")
+async def get_current_user_profile(current_user: str = Depends(get_current_user)):
+    """Get the authenticated user's profile"""
+
+    try:
+        user_doc = users_db.find_one_raw({"id": current_user})
+        if not user_doc:
+            raise HTTPException(status_code=404, detail="user not found")
+
+        # Convert to Person object and return as ActivityResponse
+        actor = json_to_person(user_doc)
+        return ActivityResponse(actor)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting current user: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
 @router.get("/{username}")
 async def get_user(username: str):
     try:
@@ -215,40 +411,78 @@ async def get_user(username: str):
         # Check if username contains @ (indicating external user)
         if "@" in username:
             try:
-                from apkit.client.asyncio.client import ActivityPubClient
+                import requests
 
-                # Use APKit's webfinger client
-                async with ActivityPubClient() as client:
-                    # Perform webfinger lookup using APKit
-                    webfinger_result = await client.webfinger.fetch(username)
+                # Parse the webfinger address (user@domain)
+                username, domain = username.split("@", 1)
+                webfinger_url = (
+                    f"https://{domain}/.well-known/webfinger?resource=acct:{username}"
+                )
 
-                    if webfinger_result:
-                        # Find the ActivityPub actor link
-                        actor_url = None
-                        for link in webfinger_result.links:
+                logger.info(f"Webfinger URL: {webfinger_url}")
+
+                # Perform webfinger lookup using requests
+                response = requests.get(
+                    webfinger_url,
+                    headers={"Accept": "application/jrd+json"},
+                    timeout=10,
+                )
+
+                if response.status_code == 200:
+                    webfinger_data = response.json()
+                    logger.info("Webfinger response received")
+
+                    # Find the ActivityPub actor link
+                    actor_url = None
+                    if "links" in webfinger_data:
+                        for link in webfinger_data["links"]:
                             if (
-                                link.rel == "self"
-                                and link.type == "application/activity+json"
+                                link.get("rel") == "self"
+                                and link.get("type") == "application/activity+json"
                             ):
-                                actor_url = link.href
+                                actor_url = link.get("href")
+                                logger.info(f"Found actor URL: {actor_url}")
                                 break
 
-                        if actor_url:
-                            # Fetch the actor profile using APKit
-                            actor = await client.actor.fetch(actor_url)
+                    if actor_url:
+                        # Fetch the actor profile using manual HTTP request
+                        actor_response = requests.get(
+                            actor_url,
+                            headers={
+                                "Accept": "application/activity+json",
+                                "User-Agent": "ActivityPub-Client/1.0",
+                            },
+                            timeout=10,
+                        )
 
-                            if actor:
-                                # Convert APKit actor to JSON and return
-                                actor_data = actor.to_json()
-                                return JSONResponse(
-                                    content=actor_data,
-                                    headers={
-                                        "Content-Type": "application/activity+json"
-                                    },
-                                )
+                        if actor_response.status_code == 200:
+                            actor_data = actor_response.json()
+                            logger.info(
+                                f"Actor data received for: {actor_data.get('preferredUsername')}"
+                            )
+
+                            # Return raw JSON-LD with proper headers
+                            return JSONResponse(
+                                content=actor_data,
+                                headers={"Content-Type": "application/activity+json"},
+                            )
+                        else:
+                            logger.warning(
+                                f"Failed to fetch actor profile, status: {actor_response.status_code}"
+                            )
+                    else:
+                        logger.warning(
+                            "No ActivityPub actor URL found in webfinger links"
+                        )
+                else:
+                    logger.warning(
+                        f"Webfinger lookup failed with status: {response.status_code}"
+                    )
 
             except Exception as webfinger_error:
-                print(f"Webfinger lookup failed for {username}: {webfinger_error}")
+                logger.warning(
+                    f"Webfinger lookup failed for {username}: {webfinger_error}"
+                )
                 # Fall through to 404
 
         # If we get here, user not found locally or via webfinger
@@ -294,29 +528,6 @@ async def get_user_by_id(host: str, name: str):
     except Exception as e:
         logger.error(f"[DEBUG] Error fetching user with ID {id}: {e}")
         raise HTTPException(status_code=500, detail="Internal Server Error")
-
-
-@router.get("/me")
-async def get_current_user_profile(current_user: str = Depends(get_current_user)):
-    """Get the authenticated user's profile"""
-
-    # Log the current user for debugging
-    logger.info(f"Current user in /me endpoint: {current_user}")
-
-    try:
-        user_doc = users_db.find_one_raw({"id": current_user})
-        if not user_doc:
-            raise HTTPException(status_code=404, detail="user not found")
-
-        # Convert to Person object and return as ActivityResponse
-        actor = json_to_person(user_doc)
-        return ActivityResponse(actor)
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting current user: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/{username}/followers")

@@ -31,12 +31,14 @@ class Database:
             for key, value in where.items():
                 conditions.append(getattr(query, key) == value)
 
-            # Combine conditions with AND
-            final_query = conditions[0]
-            for condition in conditions[1:]:
-                final_query &= condition
-
-            documents = self.db.search(final_query)
+            if not conditions:
+                documents = self.db.all()
+            else:
+                # Combine conditions with AND
+                final_query = conditions[0]
+                for condition in conditions[1:]:
+                    final_query &= condition
+                documents = self.db.search(final_query)
         else:
             documents = self.db.all()
 
@@ -53,10 +55,16 @@ class Database:
         return result
 
     def find_one(self, model_class, where: Dict[str, Any]):
+        if not where:
+            return None
+
         query = Query()
         conditions = []
         for key, value in where.items():
             conditions.append(getattr(query, key) == value)
+
+        if not conditions:
+            return None
 
         final_query = conditions[0]
         for condition in conditions[1:]:
@@ -69,10 +77,16 @@ class Database:
 
     def find_one_raw(self, where: Dict[str, Any]) -> Optional[Dict]:
         """Return raw document without model conversion"""
+        if not where:
+            return None
+
         query = Query()
         conditions = []
         for key, value in where.items():
             conditions.append(getattr(query, key) == value)
+
+        if not conditions:
+            return None
 
         final_query = conditions[0]
         for condition in conditions[1:]:
@@ -81,10 +95,16 @@ class Database:
         return self.db.get(final_query)
 
     def update(self, where: Dict[str, Any], update_data: Dict[str, Any]):
+        if not where:
+            return None
+
         query = Query()
         conditions = []
         for key, value in where.items():
             conditions.append(getattr(query, key) == value)
+
+        if not conditions:
+            return None
 
         final_query = conditions[0]
         for condition in conditions[1:]:
@@ -93,10 +113,16 @@ class Database:
         return self.db.update(update_data, final_query)
 
     def delete(self, where: Dict[str, Any]):
+        if not where:
+            return None
+
         query = Query()
         conditions = []
         for key, value in where.items():
             conditions.append(getattr(query, key) == value)
+
+        if not conditions:
+            return None
 
         final_query = conditions[0]
         for condition in conditions[1:]:
@@ -114,10 +140,17 @@ class Database:
 
     def find_raw(self, where: Dict[str, Any]) -> List[Dict]:
         """Find multiple documents matching criteria and return as raw dictionaries"""
+        if not where:
+            # If no conditions provided, return all documents
+            return self.db.all()
+
         query = Query()
         conditions = []
         for key, value in where.items():
             conditions.append(getattr(query, key) == value)
+
+        if not conditions:
+            return self.db.all()
 
         final_query = conditions[0]
         for condition in conditions[1:]:
