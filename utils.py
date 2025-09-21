@@ -1,5 +1,5 @@
 import logging
-from typing import List
+from typing import Any, Dict, List
 
 from apkit.server.types import ActorKey
 
@@ -12,6 +12,52 @@ logging.basicConfig(level=logging.DEBUG)
 
 settings = get_settings()
 users_db = Database("users.json")
+
+
+def paginate_data(
+    data: List[Dict[str, Any]], page: int = 1, limit: int = 10
+) -> Dict[str, Any]:
+    """
+    Simple pagination utility for lists of data
+
+    Args:
+        data: List of items to paginate
+        page: Page number (starts from 1)
+        limit: Items per page
+
+    Returns:
+        Dictionary with paginated data and metadata
+    """
+    # Validate inputs
+    if page < 1:
+        page = 1
+    if limit < 1:
+        limit = 10
+    if limit > 100:  # Max limit to prevent abuse
+        limit = 100
+
+    # Calculate pagination
+    total_items = len(data)
+    total_pages = (total_items + limit - 1) // limit if total_items > 0 else 1
+    start_index = (page - 1) * limit
+    end_index = start_index + limit
+
+    # Get paginated items
+    paginated_items = data[start_index:end_index]
+
+    return {
+        "data": paginated_items,
+        "pagination": {
+            "current_page": page,
+            "total_pages": total_pages,
+            "total_items": total_items,
+            "items_per_page": limit,
+            "has_next": page < total_pages,
+            "has_previous": page > 1,
+            "start_item": start_index + 1 if total_items > 0 else 0,
+            "end_item": min(end_index, total_items),
+        },
+    }
 
 
 async def get_keys_for_actor(actor_id: str) -> List[ActorKey]:

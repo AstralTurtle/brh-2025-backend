@@ -1,15 +1,17 @@
 import uuid
 from datetime import datetime
+from typing import Optional
 
 import httpx
 from apkit.server import SubRouter
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
 
 from database import Database
 from models import CreatePost
 from routes.auth import get_current_user
 from settings import get_settings
+from utils import paginate_data
 
 router = SubRouter(prefix="/posts")
 
@@ -20,10 +22,36 @@ likes_db = Database("likes.json")
 
 
 @router.get("/")
-async def get_posts():
+async def get_posts(
+    page: int = Query(1, ge=1),
+    limit: int = Query(10, ge=1, le=100),
+    in_reply_to: Optional[str] = Query(
+        None, description="Filter posts that are replies to this post ID"
+    ),
+):
+    """Get posts with pagination and optional reply filtering"""
     try:
+        # Get all posts
         posts = posts_db.all_raw()
-        return {"posts": posts}
+
+        # Filter by replies if specified
+        if in_reply_to:
+            posts = [post for post in posts if post.get("inReplyTo") == in_reply_to]
+        else:
+            # If not filtering by replies, exclude replies from main feed (optional)
+            posts = [post for post in posts if not post.get("inReplyTo")]
+
+        # Sort by date (newest first)
+        posts.sort(key=lambda x: x.get("published", ""), reverse=True)
+
+        # Apply pagination
+        result = paginate_data(posts, page, limit)
+
+        return {
+            "success": True,
+            "posts": result["data"],
+            "pagination": result["pagination"],
+        }
 
     except Exception as e:
         print(f"Error fetching posts: {e}")
@@ -71,25 +99,6 @@ async def create_post(
         # Store the post locally
         posts_db.insert_raw(note)
 
-        # Send to user's outbox with proper ActivityPub headers
-        # username = user_doc["preferredUsername"]
-        # outbox_url = f"http://localhost:8000/users/{username}/outbox"
-
-        # async with httpx.AsyncClient() as client:
-        #     response = await client.post(
-        #         outbox_url,
-        #         json=create_activity,
-        #         headers={
-        #             "Content-Type": "application/activity+json",  # ActivityPub content type
-        #             "Accept": "application/activity+json",  # Accept ActivityPub responses
-        #             "User-Agent": "brh-2025-backend/0.1.0",  # Identify your server
-        #         },
-        #     )
-
-        #     if response.status_code not in [200, 201, 202]:
-        #         print(f"Outbox error: {response.status_code} - {response.text}")
-        #         raise HTTPException(status_code=500, detail="Failed to send to outbox")
-
         return JSONResponse(
             {
                 "message": "Post created successfully",
@@ -110,14 +119,24 @@ async def create_post(
 async def like_post(post_id: str, current_user: str = Depends(get_current_user)):
     """Like a post and send Like activity to the outbox"""
     try:
-        # Check if post exists
-        post = posts_db.find_one_raw({"id": post_id})
+        # Decode the post_id if it's URL encoded
+        import urllib.parse
+
+        decoded_post_id = urllib.parse.unquote(post_id)
+
+        # Check if post exists - try both versions
+        post = posts_db.find_one_raw({"id": decoded_post_id})
+        if not post:
+            post = posts_db.find_one_raw({"id": post_id})
         if not post:
             raise HTTPException(status_code=404, detail="Post not found")
 
+        # Use the actual post ID from the found post
+        actual_post_id = post["id"]
+
         # Check if user already liked this post
         existing_like = likes_db.find_one_raw(
-            {"actor": current_user, "object": post_id}
+            {"actor": current_user, "object": actual_post_id}
         )
         if existing_like:
             raise HTTPException(status_code=400, detail="Already liked this post")
@@ -133,7 +152,7 @@ async def like_post(post_id: str, current_user: str = Depends(get_current_user))
             "id": f"https://{settings.host}/activities/{uuid.uuid4()}",
             "type": "Like",
             "actor": current_user,
-            "object": post_id,
+            "object": actual_post_id,
             "published": datetime.utcnow().isoformat() + "Z",
         }
 
@@ -143,7 +162,7 @@ async def like_post(post_id: str, current_user: str = Depends(get_current_user))
                 "id": like_activity["id"],
                 "type": "Like",
                 "actor": current_user,
-                "object": post_id,
+                "object": actual_post_id,
                 "published": like_activity["published"],
             }
         )
@@ -183,20 +202,78 @@ async def like_post(post_id: str, current_user: str = Depends(get_current_user))
 async def get_post_likes(post_id: str):
     """Get all likes for a post"""
     try:
-        # Check if post exists
-        post = posts_db.find_one_raw({"id": post_id})
+        # Decode the post_id if it's URL encoded
+        import urllib.parse
+
+        decoded_post_id = urllib.parse.unquote(post_id)
+
+        # Check if post exists - try both versions
+        post = posts_db.find_one_raw({"id": decoded_post_id})
+        if not post:
+            post = posts_db.find_one_raw({"id": post_id})
         if not post:
             raise HTTPException(status_code=404, detail="Post not found")
 
+        # Use the actual post ID from the found post
+        actual_post_id = post["id"]
+
         # Get all likes for this post
-        likes = likes_db.find_raw({"object": post_id})
+        likes = likes_db.find_raw({"object": actual_post_id})
 
         return JSONResponse(
-            {"post_id": post_id, "likes_count": len(likes), "likes": likes}
+            {"post_id": actual_post_id, "likes_count": len(likes), "likes": likes}
         )
 
     except HTTPException:
         raise
     except Exception as e:
         print(f"Error getting likes: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.get("/replies/{post_id}")
+async def get_post_replies(
+    post_id: str, page: int = Query(1, ge=1), limit: int = Query(10, ge=1, le=100)
+):
+    """Get all replies to a specific post"""
+    try:
+        # Decode the post_id if it's URL encoded
+        import urllib.parse
+
+        decoded_post_id = urllib.parse.unquote(post_id)
+
+        # Check if the original post exists - try both versions
+        original_post = posts_db.find_one_raw({"id": decoded_post_id})
+        if not original_post:
+            original_post = posts_db.find_one_raw({"id": post_id})
+        if not original_post:
+            raise HTTPException(status_code=404, detail="Original post not found")
+
+        # Use the actual post ID from the found post
+        actual_post_id = original_post["id"]
+
+        # Get all replies to this post
+        replies = [
+            post
+            for post in posts_db.all_raw()
+            if post.get("inReplyTo") == actual_post_id
+        ]
+
+        # Sort by date (oldest first for replies)
+        replies.sort(key=lambda x: x.get("published", ""))
+
+        # Apply pagination
+        result = paginate_data(replies, page, limit)
+
+        return {
+            "success": True,
+            "original_post": original_post,
+            "replies": result["data"],
+            "pagination": result["pagination"],
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error fetching replies: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")

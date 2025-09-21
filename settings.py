@@ -8,7 +8,6 @@ class Settings(BaseSettings):
     private_key: str
     host: str
     port: int
-    steam_key: str
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
