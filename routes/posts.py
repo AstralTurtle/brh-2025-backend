@@ -78,6 +78,7 @@ async def create_post(
             "id": post_id,
             "type": "Note",
             "content": post_data.content,
+            "embed": post_data.embed,
             "attributedTo": current_user,
             "published": datetime.utcnow().isoformat() + "Z",
             "to": post_data.to or ["https://www.w3.org/ns/activitystreams#Public"],

@@ -23,3 +23,4 @@ class CreatePost(BaseModel):
     summary: Optional[str] = None  # For content warnings
     sensitive: Optional[bool] = False
     in_reply_to: Optional[str] = None  # For replies
+    embed: Optional[str] = None  # For itch.io embeds

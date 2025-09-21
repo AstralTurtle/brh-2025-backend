@@ -84,9 +84,9 @@ def format_game_summary(games_data, tag_name):
         text_lines = [f"Top 5 trending {tag_name} games:\n"]
         for i, game in enumerate(top_games, 1):
             name = game.get("name", "Unknown")
-            text_lines.append(f"{i}. {name}")
+            text_lines.append(f"{i}. {name} by {game['developer']}")
 
-        return "\n".join(text_lines)
+        return ";".join(text_lines)
 
     except Exception:
         return f"Error getting {tag_name} trends"
