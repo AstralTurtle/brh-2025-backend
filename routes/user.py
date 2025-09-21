@@ -1,4 +1,5 @@
 import logging
+import uuid
 
 from apkit.models import CryptographicKey, Person
 from apkit.server import SubRouter
@@ -10,10 +11,12 @@ from fastapi.responses import JSONResponse
 from pyld import jsonld
 
 from database import Database
+from follow_activity import follow_wrapper
 from models import CreateUser, LoginRequest
 from routes.auth import get_current_user, hash_password
 from settings import get_settings
 
+# Use the routes.user logger that's configured in main.py
 logger = logging.getLogger(__name__)
 
 router = SubRouter(prefix="/users")
@@ -190,23 +193,66 @@ async def login_user(login_data: LoginRequest):
 @router.get("/{username}")
 async def get_user(username: str):
     try:
+        # First try to find user locally
         user_doc = users_db.find_one_raw({"preferredUsername": username})
-        if not user_doc:
-            raise HTTPException(status_code=404, detail="User not found")
 
-        # Remove auth data and ensure proper JSON-LD context
-        clean_doc = user_doc.copy()
-        if "_auth" in clean_doc:
-            del clean_doc["_auth"]
+        if user_doc:
+            # Remove auth data and ensure proper JSON-LD context
+            clean_doc = user_doc.copy()
+            if "_auth" in clean_doc:
+                del clean_doc["_auth"]
 
-        # Ensure proper ActivityPub context
-        if "@context" not in clean_doc:
-            clean_doc["@context"] = ACTIVITYPUB_CONTEXT["@context"]
+            # Ensure proper ActivityPub context
+            if "@context" not in clean_doc:
+                clean_doc["@context"] = ACTIVITYPUB_CONTEXT["@context"]
 
-        # Return raw JSON-LD with proper headers
-        return JSONResponse(
-            content=clean_doc, headers={"Content-Type": "application/activity+json"}
-        )
+            # Return raw JSON-LD with proper headers
+            return JSONResponse(
+                content=clean_doc, headers={"Content-Type": "application/activity+json"}
+            )
+
+        # If not found locally, try webfinger lookup for external users
+        # Check if username contains @ (indicating external user)
+        if "@" in username:
+            try:
+                from apkit.client.asyncio.client import ActivityPubClient
+
+                # Use APKit's webfinger client
+                async with ActivityPubClient() as client:
+                    # Perform webfinger lookup using APKit
+                    webfinger_result = await client.webfinger.fetch(username)
+
+                    if webfinger_result:
+                        # Find the ActivityPub actor link
+                        actor_url = None
+                        for link in webfinger_result.links:
+                            if (
+                                link.rel == "self"
+                                and link.type == "application/activity+json"
+                            ):
+                                actor_url = link.href
+                                break
+
+                        if actor_url:
+                            # Fetch the actor profile using APKit
+                            actor = await client.actor.fetch(actor_url)
+
+                            if actor:
+                                # Convert APKit actor to JSON and return
+                                actor_data = actor.to_json()
+                                return JSONResponse(
+                                    content=actor_data,
+                                    headers={
+                                        "Content-Type": "application/activity+json"
+                                    },
+                                )
+
+            except Exception as webfinger_error:
+                print(f"Webfinger lookup failed for {username}: {webfinger_error}")
+                # Fall through to 404
+
+        # If we get here, user not found locally or via webfinger
+        raise HTTPException(status_code=404, detail="User not found")
 
     except HTTPException:
         raise
@@ -253,10 +299,14 @@ async def get_user_by_id(host: str, name: str):
 @router.get("/me")
 async def get_current_user_profile(current_user: str = Depends(get_current_user)):
     """Get the authenticated user's profile"""
+
+    # Log the current user for debugging
+    logger.info(f"Current user in /me endpoint: {current_user}")
+
     try:
         user_doc = users_db.find_one_raw({"id": current_user})
         if not user_doc:
-            raise HTTPException(status_code=404, detail="User not found")
+            raise HTTPException(status_code=404, detail="user not found")
 
         # Convert to Person object and return as ActivityResponse
         actor = json_to_person(user_doc)
@@ -265,5 +315,155 @@ async def get_current_user_profile(current_user: str = Depends(get_current_user)
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Error getting current user: {e}")
+        logger.error(f"Error getting current user: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.get("/{username}/followers")
+async def get_user_followers(username: str):
+    """Get followers for a user"""
+    try:
+        user_doc = users_db.find_one_raw({"preferredUsername": username})
+        if not user_doc:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        followers = await follow_wrapper.get_followers(user_doc["id"])
+
+        return JSONResponse(
+            {
+                "user": user_doc["id"],
+                "followers_count": len(followers),
+                "followers": followers,
+            }
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error getting followers: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.get("/{username}/following")
+async def get_user_following(username: str):
+    """Get users that a user is following"""
+    try:
+        user_doc = users_db.find_one_raw({"preferredUsername": username})
+        if not user_doc:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        following = await follow_wrapper.get_following(user_doc["id"])
+
+        return JSONResponse(
+            {
+                "user": user_doc["id"],
+                "following_count": len(following),
+                "following": following,
+            }
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error getting following: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.post("/{username}/follow")
+async def follow_user(username: str, current_user: str = Depends(get_current_user)):
+    """Follow a user"""
+    try:
+        target_user = users_db.find_one_raw({"preferredUsername": username})
+        if not target_user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Check if already following
+        is_already_following = await follow_wrapper.is_following(
+            current_user, target_user["id"]
+        )
+        if is_already_following:
+            return JSONResponse(
+                {"message": "Already following this user"}, status_code=200
+            )
+
+        # Store the follow relationship
+        activity_id = f"https://{settings.host}/activities/follow-{uuid.uuid4()}"
+        await follow_wrapper.store_follow_relationship(
+            current_user,
+            target_user["id"],
+            activity_id,
+            "accepted",  # For local follows, auto-accept
+        )
+
+        return JSONResponse(
+            {
+                "message": "Successfully followed user",
+                "follower": current_user,
+                "following": target_user["id"],
+            },
+            status_code=201,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error following user: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.delete("/{username}/follow")
+async def unfollow_user(username: str, current_user: str = Depends(get_current_user)):
+    """Unfollow a user"""
+    try:
+        target_user = users_db.find_one_raw({"preferredUsername": username})
+        if not target_user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Remove the follow relationship
+        follow_wrapper.follows_db.delete(
+            {"follower": current_user, "following": target_user["id"]}
+        )
+
+        return JSONResponse(
+            {
+                "message": "Successfully unfollowed user",
+                "follower": current_user,
+                "following": target_user["id"],
+            },
+            status_code=200,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error unfollowing user: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.get("/{username}/follow-status/{target_username}")
+async def check_follow_status(username: str, target_username: str):
+    """Check if one user is following another"""
+    try:
+        user_doc = users_db.find_one_raw({"preferredUsername": username})
+        target_doc = users_db.find_one_raw({"preferredUsername": target_username})
+
+        if not user_doc or not target_doc:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        is_following = await follow_wrapper.is_following(
+            user_doc["id"], target_doc["id"]
+        )
+
+        return JSONResponse(
+            {
+                "follower": user_doc["id"],
+                "following": target_doc["id"],
+                "is_following": is_following,
+            }
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error checking follow status: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")

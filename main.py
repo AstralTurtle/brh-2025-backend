@@ -1,13 +1,10 @@
+import logging
 import uuid
 from datetime import datetime
 
 import uvicorn
-from apkit.client.asyncio.client import ActivityPubClient
 from apkit.client.models import Link, Resource, WebfingerResult
 from apkit.config import AppConfig
-from apkit.models import (
-    Actor as APKitActor,
-)
 from apkit.models import (
     Create,
     CryptographicKey,
@@ -39,8 +36,47 @@ import routes.posts
 import routes.user
 import steam_tags
 from database import Database
+from follow_activity import follow_wrapper
 from settings import get_settings
 from utils import get_keys_for_actor
+
+# Configure logging dictionary for uvicorn
+LOGGING_CONFIG = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "default": {
+            "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        },
+        "access": {
+            "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        },
+    },
+    "handlers": {
+        "default": {
+            "formatter": "default",
+            "class": "logging.StreamHandler",
+            "stream": "ext://sys.stdout",
+        },
+        "access": {
+            "formatter": "access",
+            "class": "logging.StreamHandler",
+            "stream": "ext://sys.stdout",
+        },
+    },
+    "loggers": {
+        "uvicorn": {"handlers": ["default"], "level": "INFO"},
+        "uvicorn.error": {"level": "INFO"},
+        "uvicorn.access": {"handlers": ["access"], "level": "INFO"},
+        # Add our application loggers
+        "__main__": {"handlers": ["default"], "level": "INFO"},
+        "routes.user": {"handlers": ["default"], "level": "INFO"},
+        "routes.auth": {"handlers": ["default"], "level": "INFO"},
+        "routes.posts": {"handlers": ["default"], "level": "INFO"},
+    },
+}
+
+logger = logging.getLogger(__name__)
 
 # --- Configuration ---
 HOST = get_settings().host
@@ -121,7 +157,7 @@ app.outbox("/users/{identifier}/outbox")
 
 @app.webfinger()
 async def webfinger_endpoint(request: Request, acct: Resource) -> Response:
-    print(f"[DEBUG] Webfinger request for: {acct.username}@{acct.host}")
+    logger.info(f"Webfinger request for: {acct.username}@{acct.host}")
 
     # Handle your database users - THIS IS THE KEY FIX
     if acct.host == HOST or acct.host == settings.host:
@@ -160,62 +196,45 @@ async def on_follow_activity(ctx: Context):
     if not isinstance(activity, Follow):
         return JSONResponse({"error": "Invalid activity type"}, status_code=400)
 
-    # Resolve the actor who sent the Follow request
-    follower_actor = None
-    if isinstance(activity.actor, str):
-        async with ActivityPubClient() as client:
-            follower_actor = await client.actor.fetch(activity.actor)
-    elif isinstance(activity.actor, APKitActor):
-        follower_actor = activity.actor
-
-    if not follower_actor:
-        return JSONResponse(
-            {"error": "Could not resolve follower actor"}, status_code=400
-        )
-
-    # Automatically accept the follow request
-    accept_activity = activity.accept()
-
-    # Send the signed Accept activity back to the follower's inbox
-    await ctx.send(get_keys_for_actor, follower_actor, accept_activity)
-    return Response(status_code=202)
+    # Use the follow wrapper to handle the request
+    return await follow_wrapper.handle_follow_request(ctx, activity)
 
 
 @app.on(Create)
 async def create_post(ctx: Context):
     try:
-        print("[DEBUG] Create activity received")
-        print(f"[DEBUG] Activity: {ctx.activity}")
-        print(f"[DEBUG] Actor: {ctx.activity.actor}")
-        print(f"[DEBUG] Actor type: {type(ctx.activity.actor)}")
+        logger.info("Create activity received")
+        logger.debug(f"Activity: {ctx.activity}")
+        logger.debug(f"Actor: {ctx.activity.actor}")
+        logger.debug(f"Actor type: {type(ctx.activity.actor)}")
 
         # Fix: Handle actor as string (which is the normal case)
         actor_id = str(ctx.activity.actor)  # Convert to string if it's not already
 
-        print(f"[DEBUG] Looking for user with id: {actor_id}")
+        logger.debug(f"Looking for user with id: {actor_id}")
 
         # Find user by actor ID
         user_doc = users_db.find_one_raw({"id": actor_id})
         if user_doc:
-            print(f"[DEBUG] Found user: {user_doc.get('preferredUsername')}")
+            logger.debug(f"Found user: {user_doc.get('preferredUsername')}")
 
             if isinstance(ctx.activity.object, Note):
                 new_post = ctx.activity.object
-                print(f"[DEBUG] Post content: {new_post.content}")
+                logger.debug(f"Post content: {new_post.content}")
 
                 # Use the built-in to_json() method to serialize the ActivityPub Note
                 post_data = new_post.to_json()
 
                 # Store the ActivityPub JSON-LD format directly in TinyDB
                 posts_db.insert_raw(post_data)
-                print("[DEBUG] Post stored successfully!")
+                logger.info("Post stored successfully!")
 
                 return Response(status_code=202)
         else:
-            print(f"[DEBUG] User not found with id: {actor_id}")
+            logger.debug(f"User not found with id: {actor_id}")
 
     except Exception as e:
-        print(f"[DEBUG] Error in create_post: {e}")
+        logger.error(f"Error in create_post: {e}")
         import traceback
 
         traceback.print_exc()
@@ -230,16 +249,16 @@ async def on_like_activity(ctx: Context):
         if not isinstance(activity, Like):
             return JSONResponse({"error": "Invalid activity type"}, status_code=400)
 
-        print("[DEBUG] Like activity received")
-        print(f"[DEBUG] Actor: {activity.actor}")
-        print(f"[DEBUG] Object: {activity.object}")
+        logger.info("Like activity received")
+        logger.debug(f"Actor: {activity.actor}")
+        logger.debug(f"Object: {activity.object}")
 
         # Get the actor who liked the post
         actor_id = str(activity.actor)
         liker_user = users_db.find_one_raw({"id": actor_id})
 
         if not liker_user:
-            print(f"[DEBUG] Liker not found: {actor_id}")
+            logger.debug(f"Liker not found: {actor_id}")
             return JSONResponse({"error": "Actor not found"}, status_code=404)
 
         # Get the object being liked (could be a post ID or full object)
@@ -249,7 +268,7 @@ async def on_like_activity(ctx: Context):
         liked_post = posts_db.find_one_raw({"id": liked_object_id})
 
         if not liked_post:
-            print(f"[DEBUG] Post not found: {liked_object_id}")
+            logger.debug(f"Post not found: {liked_object_id}")
             return JSONResponse({"error": "Post not found"}, status_code=404)
 
         # Store the like activity
@@ -265,14 +284,14 @@ async def on_like_activity(ctx: Context):
         likes_db = Database("likes.json")
         likes_db.insert_raw(like_data)
 
-        print(
-            f"[DEBUG] Like stored: {liker_user['preferredUsername']} liked post {liked_object_id}"
+        logger.info(
+            f"Like stored: {liker_user['preferredUsername']} liked post {liked_object_id}"
         )
 
         return Response(status_code=202)
 
     except Exception as e:
-        print(f"[DEBUG] Error in on_like_activity: {e}")
+        logger.error(f"Error in on_like_activity: {e}")
         import traceback
 
         traceback.print_exc()
@@ -280,4 +299,11 @@ async def on_like_activity(ctx: Context):
 
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=settings.port, reload=True)
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=settings.port,
+        reload=True,
+        log_config=LOGGING_CONFIG,  # Use the configured logging dictionary
+        access_log=True,
+    )
