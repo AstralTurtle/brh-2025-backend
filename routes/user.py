@@ -1,3 +1,5 @@
+import logging
+
 from apkit.models import CryptographicKey, Person
 from apkit.server import SubRouter
 from apkit.server.responses import ActivityResponse
@@ -11,6 +13,8 @@ from database import Database
 from models import CreateUser, LoginRequest
 from routes.auth import get_current_user, hash_password
 from settings import get_settings
+
+logger = logging.getLogger(__name__)
 
 router = SubRouter(prefix="/users")
 settings = get_settings()
@@ -133,7 +137,8 @@ async def create_user(user_data: CreateUser):
         )
 
     except HTTPException:
-        raise
+        raise HTTPException(status_code=502, detail="Service Unavailable")
+
     except Exception as e:
         print(f"Error creating user: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
@@ -201,12 +206,20 @@ async def get_user(username: str):
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@router.get("/{id}")
-async def get_user_by_id(id: str):
+@router.get("/{host}/users/{name}")
+async def get_user_by_id(host: str, name: str):
+    id = f"https://{host}/users/{name}"
+    logger.info(f"[DEBUG] Looking for user with ID: {id}")
+
     try:
         user_doc = users_db.find_one_raw({"id": id})
         if not user_doc:
+            logger.warning(f"[DEBUG] User not found with ID: {id}")
             raise HTTPException(status_code=404, detail="User not found")
+
+        logger.info(
+            f"[DEBUG] Found user: {user_doc.get('preferredUsername', 'unknown')} with ID: {id}"
+        )
 
         clean_doc = user_doc.copy()
         if "_auth" in clean_doc:
@@ -224,7 +237,7 @@ async def get_user_by_id(id: str):
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Error fetching user: {e}")
+        logger.error(f"[DEBUG] Error fetching user with ID {id}: {e}")
         raise HTTPException(status_code=500, detail="Internal Server Error")
 
 
