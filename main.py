@@ -81,7 +81,7 @@ actor = Person(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     scheduler = AsyncIOScheduler()
-    scheduler.add_job(steam_tags.update_info, "interval", seconds=15)
+    scheduler.add_job(steam_tags.update_info, "interval", minutes=5)
     scheduler.start()
     yield
 

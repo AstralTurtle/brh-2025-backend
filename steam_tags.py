@@ -66,6 +66,7 @@ async def update_info():
     data_request["tag"] = current_tag
     update_tags.insert(0, current_tag)
     data = steamspypi.download(data_request)
+    array_data = [data[k] for k in data.keys()[:10]]
     await create_post(
         CreatePost(
             content=f"Top 10 trending games for {current_tag} on steam: {data}",
