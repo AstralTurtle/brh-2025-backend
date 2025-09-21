@@ -137,53 +137,18 @@ async def update_info():
     current_tag: str = update_tags.pop()
     data_request["tag"] = current_tag
     update_tags.insert(0, current_tag)
-
-    try:
-        # Get data from Steam API
-        data = steamspypi.download(data_request)
-
-        # Store raw data for later use
-        steam_db.insert_raw(
-            {
-                "tag": current_tag,
-                "data": data,
-                "timestamp": steamspypi.time.time()
-                if hasattr(steamspypi, "time")
-                else None,
-            }
-        )
-
-        # Parse data into readable text
-        readable_content = parse_steam_data_to_text(data, current_tag)
-
-        # Create the post with readable content
-        await create_post(
-            CreatePost(
-                content=readable_content,
-                to=["https://www.w3.org/ns/activitystreams#Public"],
-                cc=[
-                    f"https://{settings.host}/users/{current_tag.replace(' ', '').lower()}tracker/followers"
-                ],
-            ),
-            current_user=f"https://{settings.host}/users/{current_tag.replace(' ', '').lower()}tracker",
-        )
-
-        print(f"✅ Posted trending games for {current_tag}")
-
-    except Exception as e:
-        print(f"❌ Error updating {current_tag}: {e}")
-
-        # Fallback post if API fails
-        await create_post(
-            CreatePost(
-                content=f"🚫 Unable to fetch trending {current_tag} games right now. Check back later! #Steam #{current_tag.replace(' ', '')}",
-                to=["https://www.w3.org/ns/activitystreams#Public"],
-                cc=[
-                    f"https://{settings.host}/users/{current_tag.replace(' ', '').lower()}tracker/followers"
-                ],
-            ),
-            current_user=f"https://{settings.host}/users/{current_tag.replace(' ', '').lower()}tracker",
-        )
+    data = steamspypi.download(data_request)
+    array_data = [data[k] for k in data.keys()][:10]
+    await create_post(
+        CreatePost(
+            content=f"Top 10 trending games for {current_tag} on steam: {array_data}",
+            to=["https://www.w3.org/ns/activitystreams#Public"],
+            cc=[
+                f"https://{settings.host}/users/{current_tag.replace(' ', '').lower()}tracker/followers"
+            ],
+        ),
+        current_user=f"https://{settings.host}/users/{current_tag.replace(' ', '').lower()}tracker",
+    )
 
 
 if __name__ == "__main__":
